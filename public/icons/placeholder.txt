@@ -1,0 +1,15 @@
+# Icon Placeholders
+
+This extension needs the following icon files:
+- icon-16.png (16x16 pixels)
+- icon-32.png (32x32 pixels) 
+- icon-48.png (48x48 pixels)
+- icon-128.png (128x128 pixels)
+
+The icons should represent the Hebrew learning theme - perhaps incorporating:
+- Hebrew letters (אבג)
+- Books or learning symbols
+- Language/translation iconography
+- Blue/purple color scheme to match the UI
+
+For now, you can create simple placeholder icons or use existing ones from icon libraries.

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Learn Hebrew in Context</title>
+  <style>
+    body {
+      width: 380px;
+      min-height: 500px;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 16px 20px;
+      text-align: center;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    .toggle.active {
+      background: rgba(255, 255, 255, 0.8);
+    }
+
+    .toggle-slider {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 10px;
+      transition: transform 0.3s ease;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .toggle.active .toggle-slider {
+      transform: translateX(20px);
+    }
+
+    .nav-tabs {
+      display: flex;
+      background: white;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .nav-tab {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #64748b;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s ease;
+    }
+
+    .nav-tab.active {
+      color: #667eea;
+      border-bottom-color: #667eea;
+    }
+
+    .nav-tab:hover {
+      background: #f8fafc;
+    }
+
+    .content {
+      background: white;
+      min-height: 400px;
+    }
+
+    .tab-content {
+      display: none;
+      padding: 20px;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .add-word-form {
+      background: #f1f5f9;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .btn:hover {
+      background: #5a67d8;
+    }
+
+    .btn-small {
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .word-list {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .word-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .word-item:last-child {
+      border-bottom: none;
+    }
+
+    .word-info {
+      flex: 1;
+    }
+
+    .word-english {
+      font-weight: 500;
+      color: #1f2937;
+    }
+
+    .word-hebrew {
+      font-size: 16px;
+      color: #667eea;
+      margin-top: 2px;
+    }
+
+    .word-meta {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .settings-group {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .settings-group:last-child {
+      border-bottom: none;
+    }
+
+    .settings-group h3 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .setting-item label {
+      font-size: 14px;
+      color: #374151;
+    }
+
+    .range-input {
+      width: 120px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: #f8fafc;
+      padding: 16px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .stat-number {
+      font-size: 24px;
+      font-weight: 700;
+      color: #667eea;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #6b7280;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .error-message {
+      background: #fef2f2;
+      color: #dc2626;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .success-message {
+      background: #f0fdf4;
+      color: #16a34a;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Learn Hebrew in Context</h1>
+    <div class="toggle-container">
+      <span>Extension</span>
+      <div class="toggle" id="mainToggle">
+        <div class="toggle-slider"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-tab="vocabulary">Vocabulary</button>
+    <button class="nav-tab" data-tab="settings">Settings</button>
+    <button class="nav-tab" data-tab="stats">Statistics</button>
+  </div>
+
+  <div class="content">
+    <div class="tab-content active" id="vocabulary">
+      <div class="add-word-form">
+        <div class="form-group">
+          <label for="englishWord">English Word</label>
+          <input type="text" id="englishWord" placeholder="Enter English word">
+        </div>
+        <div class="form-group">
+          <label for="hebrewWord">Hebrew Translation</label>
+          <input type="text" id="hebrewWord" placeholder="Enter Hebrew translation">
+        </div>
+        <div class="form-group">
+          <label for="category">Category</label>
+          <select id="category">
+            <option value="general">General</option>
+            <option value="food">Food</option>
+            <option value="family">Family</option>
+            <option value="work">Work</option>
+            <option value="travel">Travel</option>
+            <option value="home">Home</option>
+          </select>
+        </div>
+        <button class="btn" id="addWordBtn">Add Word</button>
+      </div>
+
+      <div id="errorMessage" class="error-message" style="display: none;"></div>
+      <div id="successMessage" class="success-message" style="display: none;"></div>
+
+      <div class="word-list" id="wordList">
+        <div class="loading">Loading vocabulary...</div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="settings">
+      <div class="settings-group">
+        <h3>Replacement Settings</h3>
+        <div class="setting-item">
+          <label>Replacement Mode</label>
+          <select id="replacementMode">
+            <option value="all">Replace All Words</option>
+            <option value="random">Random Replacement</option>
+            <option value="difficulty-based">Difficulty Based</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label>Replacement Percentage</label>
+          <input type="range" id="replacementPercentage" min="10" max="100" step="10" class="range-input">
+          <span id="percentageValue">50%</span>
+        </div>
+        <div class="setting-item">
+          <label>Tooltip Delay (ms)</label>
+          <input type="range" id="tooltipDelay" min="100" max="2000" step="100" class="range-input">
+          <span id="delayValue">500ms</span>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <h3>Excluded Domains</h3>
+        <div class="form-group">
+          <input type="text" id="excludeDomain" placeholder="Enter domain (e.g., google.com)">
+          <button class="btn btn-small" id="addDomainBtn">Add</button>
+        </div>
+        <div id="excludedDomainsList"></div>
+      </div>
+
+      <button class="btn" id="saveSettingsBtn">Save Settings</button>
+    </div>
+
+    <div class="tab-content" id="stats">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-number" id="totalWords">0</div>
+          <div class="stat-label">Words in Vocabulary</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number" id="totalOccurrences">0</div>
+          <div class="stat-label">Total Occurrences</div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <h3>Most Seen Words</h3>
+        <div id="mostSeenWords" class="word-list">
+          <div class="loading">Loading statistics...</div>
+        </div>
+      </div>
+
+      <button class="btn" id="exportDataBtn">Export Data</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
