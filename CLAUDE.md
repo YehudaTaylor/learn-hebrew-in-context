@@ -26,10 +26,11 @@ The extension follows Chrome Extension Manifest V3 architecture with TypeScript:
 ### Key Features Implemented
 - Real-time word replacement with multiple replacement modes
 - Hover tooltips showing original words
-- Shift+click to add new words to vocabulary
+- **Automatic translation**: Shift+click to automatically translate and add words to vocabulary
+- **Multi-source translation**: Google Translate, LibreTranslate, and built-in dictionary fallback
 - Statistics tracking and analytics
 - Domain exclusions and customizable settings
-- Context menu integration
+- Context menu integration with auto-translation
 - Data export functionality
 
 ## Development Commands
@@ -67,7 +68,8 @@ src/
 └── shared/             # Shared utilities and types
     ├── database.ts     # IndexedDB management
     ├── types.ts        # TypeScript interfaces
-    └── utils.ts        # Helper functions
+    ├── utils.ts        # Helper functions
+    └── translation-service.ts  # Auto-translation service
 
 public/
 ├── manifest.json       # Extension manifest
@@ -88,6 +90,14 @@ tests/                  # Jest test suites
 - Respects user settings for replacement modes and percentages
 - Excludes script tags, style elements, and form inputs
 - Implements debouncing for performance
+- **Auto-translation on shift+click with loading states and error handling**
+
+### Translation Service Architecture
+- **Multi-source translation**: Tries Google Translate, then LibreTranslate, then built-in dictionary
+- **Intelligent caching**: Stores translations in localStorage for fast retrieval
+- **Graceful fallbacks**: Falls back to manual input if all translation sources fail
+- **Hebrew validation**: Ensures translations contain Hebrew characters
+- **Context menu integration**: Also works from right-click context menu
 
 ### Message Passing
 - Background service handles all Chrome API interactions

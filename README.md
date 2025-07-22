@@ -11,7 +11,8 @@ A Chrome extension that helps you learn Hebrew vocabulary by replacing English w
   - Replace all words
   - Random replacement based on percentage
   - Difficulty-based replacement
-- **Smart Word Selection**: Shift+click any word on a page to add it to your vocabulary
+- **Automatic Translation**: Shift+click any word on a page and it's automatically translated and added to your vocabulary
+- **Smart Word Selection**: Multiple translation sources including Google Translate and LibreTranslate with fallback to built-in dictionary
 - **Statistics Tracking**: Monitor your learning progress with detailed statistics
 - **Customizable Settings**: 
   - Exclude specific domains
@@ -46,10 +47,10 @@ npm run typecheck
 ## Usage
 
 1. **Install and Enable**: Install the extension and ensure it's enabled
-2. **Add Vocabulary**: Use the popup to add English-Hebrew word pairs
-3. **Browse Naturally**: Visit any website - English words in your vocabulary will be replaced with Hebrew
-4. **Learn Interactively**: Hover over Hebrew words to see the English translation
-5. **Expand Vocabulary**: Shift+click any word on a page to add it to your vocabulary
+2. **Add Vocabulary**: Use the popup to manually add English-Hebrew word pairs, or...
+3. **Auto-Add Words**: Simply shift+click any English word on any webpage and it's automatically translated to Hebrew and added to your vocabulary!
+4. **Browse Naturally**: Visit any website - English words in your vocabulary will be replaced with Hebrew
+5. **Learn Interactively**: Hover over Hebrew words to see the English translation
 6. **Track Progress**: View statistics and learning progress in the popup
 
 ## Architecture

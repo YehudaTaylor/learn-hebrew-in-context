@@ -6,6 +6,7 @@ import {
   isDomainExcluded,
   debounce
 } from '../shared/utils';
+import { TranslationService, TranslationResult } from '../shared/translation-service';
 
 class ContentScript {
   private vocabulary: VocabularyWord[] = [];
@@ -14,6 +15,8 @@ class ContentScript {
   private tooltip: HTMLElement | null = null;
   private isProcessing = false;
   private observer: MutationObserver | null = null;
+  private translationService: TranslationService = new TranslationService();
+  private loadingTooltip: HTMLElement | null = null;
 
   async initialize(): Promise<void> {
     if (isDomainExcluded(window.location.href, this.settings?.excludedDomains || [])) {
@@ -233,7 +236,7 @@ class ContentScript {
       }
 
       if (selectedText && selectedText.length > 0) {
-        this.promptAddWord(selectedText);
+        this.autoAddWord(selectedText, event.clientX, event.clientY);
         event.preventDefault();
       }
     }
@@ -307,9 +310,194 @@ class ContentScript {
     }
   }
 
-  private promptAddWord(englishWord: string): void {
+  private async autoAddWord(englishWord: string, x: number, y: number): Promise<void> {
+    // Check if word already exists
+    const existingWord = this.vocabulary.find(
+      w => normalizeWord(w.english) === normalizeWord(englishWord)
+    );
+    
+    if (existingWord) {
+      this.showTemporaryMessage(
+        `"${englishWord}" is already in your vocabulary (${existingWord.hebrew})`,
+        x, y, 'info'
+      );
+      return;
+    }
+
+    // Show loading indicator
+    this.showLoadingTooltip(englishWord, x, y);
+
+    try {
+      // Get automatic translation
+      const translation: TranslationResult = await this.translationService.translateToHebrew(englishWord);
+      
+      // Hide loading tooltip
+      this.hideLoadingTooltip();
+
+      // Add word to vocabulary
+      await chrome.runtime.sendMessage({
+        type: 'ADD_WORD',
+        payload: {
+          english: englishWord.toLowerCase(),
+          hebrew: translation.hebrew,
+          category: 'auto-added'
+        }
+      });
+
+      // Show success message
+      this.showTemporaryMessage(
+        `Added "${englishWord}" → "${translation.hebrew}" (via ${translation.source})`,
+        x, y, 'success'
+      );
+
+    } catch (error) {
+      console.error('Auto-translation failed:', error);
+      this.hideLoadingTooltip();
+      
+      // Fallback to manual input
+      this.showManualTranslationPrompt(englishWord, x, y);
+    }
+  }
+
+  private showLoadingTooltip(word: string, x: number, y: number): void {
+    this.hideLoadingTooltip();
+    
+    this.loadingTooltip = document.createElement('div');
+    this.loadingTooltip.className = 'hebrew-loading-tooltip';
+    this.loadingTooltip.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div class="loading-spinner"></div>
+        <span>Translating "${word}"...</span>
+      </div>
+    `;
+    
+    this.loadingTooltip.style.cssText = `
+      position: absolute;
+      background: #1f2937;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      z-index: 10001;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      pointer-events: none;
+      white-space: nowrap;
+    `;
+
+    // Add CSS for loading spinner
+    if (!document.getElementById('hebrew-loading-styles')) {
+      const style = document.createElement('style');
+      style.id = 'hebrew-loading-styles';
+      style.textContent = `
+        .loading-spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-top: 2px solid white;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(this.loadingTooltip);
+
+    // Position tooltip
+    const tooltipRect = this.loadingTooltip.getBoundingClientRect();
+    let left = x - (tooltipRect.width / 2);
+    let top = y - tooltipRect.height - 10;
+
+    // Adjust if tooltip goes off screen
+    if (left < 0) left = 8;
+    if (left + tooltipRect.width > window.innerWidth) {
+      left = window.innerWidth - tooltipRect.width - 8;
+    }
+    if (top < 0) {
+      top = y + 10;
+    }
+
+    this.loadingTooltip.style.left = `${left + window.scrollX}px`;
+    this.loadingTooltip.style.top = `${top + window.scrollY}px`;
+  }
+
+  private hideLoadingTooltip(): void {
+    if (this.loadingTooltip) {
+      this.loadingTooltip.remove();
+      this.loadingTooltip = null;
+    }
+  }
+
+  private showTemporaryMessage(message: string, x: number, y: number, type: 'success' | 'error' | 'info'): void {
+    const colors = {
+      success: { bg: '#10b981', border: '#059669' },
+      error: { bg: '#ef4444', border: '#dc2626' },
+      info: { bg: '#3b82f6', border: '#2563eb' }
+    };
+
+    const messageEl = document.createElement('div');
+    messageEl.className = `hebrew-temp-message ${type}`;
+    messageEl.textContent = message;
+    
+    messageEl.style.cssText = `
+      position: absolute;
+      background: ${colors[type].bg};
+      color: white;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      z-index: 10002;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      pointer-events: none;
+      max-width: 300px;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.3s ease;
+    `;
+
+    document.body.appendChild(messageEl);
+
+    // Position message
+    const messageRect = messageEl.getBoundingClientRect();
+    let left = x - (messageRect.width / 2);
+    let top = y - messageRect.height - 10;
+
+    if (left < 0) left = 8;
+    if (left + messageRect.width > window.innerWidth) {
+      left = window.innerWidth - messageRect.width - 8;
+    }
+    if (top < 0) {
+      top = y + 10;
+    }
+
+    messageEl.style.left = `${left + window.scrollX}px`;
+    messageEl.style.top = `${top + window.scrollY}px`;
+
+    // Animate in
+    requestAnimationFrame(() => {
+      messageEl.style.opacity = '1';
+      messageEl.style.transform = 'translateY(0)';
+    });
+
+    // Remove after delay
+    setTimeout(() => {
+      messageEl.style.opacity = '0';
+      messageEl.style.transform = 'translateY(-10px)';
+      setTimeout(() => {
+        messageEl.remove();
+      }, 300);
+    }, 3000);
+  }
+
+  private showManualTranslationPrompt(englishWord: string, x: number, y: number): void {
     const hebrewTranslation = prompt(
-      `Add "${englishWord}" to your vocabulary.\nEnter the Hebrew translation:`
+      `Auto-translation failed for "${englishWord}".\nPlease enter the Hebrew translation manually:`
     );
 
     if (hebrewTranslation && hebrewTranslation.trim()) {
@@ -318,9 +506,14 @@ class ContentScript {
         payload: {
           english: englishWord.toLowerCase(),
           hebrew: hebrewTranslation.trim(),
-          category: 'user-added'
+          category: 'manual-added'
         }
       });
+
+      this.showTemporaryMessage(
+        `Added "${englishWord}" → "${hebrewTranslation}" (manual entry)`,
+        x, y, 'success'
+      );
     }
   }
 
@@ -359,6 +552,10 @@ class ContentScript {
     this.resetReplacements();
     this.observer?.disconnect();
     this.hideTooltip();
+    this.hideLoadingTooltip();
+    
+    // Clean up any temporary messages
+    document.querySelectorAll('.hebrew-temp-message').forEach(el => el.remove());
     
     document.removeEventListener('mouseover', this.handleMouseOver);
     document.removeEventListener('mouseout', this.handleMouseOut);

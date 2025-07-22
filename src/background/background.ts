@@ -6,9 +6,11 @@ import {
   VocabularyWord, 
   UserSettings 
 } from '../shared/types';
+import { TranslationService } from '../shared/translation-service';
 
 class BackgroundService {
   private initialized = false;
+  private translationService = new TranslationService();
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -182,21 +184,47 @@ class BackgroundService {
               `"${selectedText}" is already in your vocabulary.`
             );
           } else {
-            // For now, we can't easily prompt for Hebrew translation in background
-            // So we'll add it with a placeholder and let user edit in popup
-            await db.addWord({
-              english: selectedText.toLowerCase(),
-              hebrew: '[Add Hebrew translation]',
-              difficulty: 'medium',
-              category: 'context-menu'
-            });
+            // Try to auto-translate the word
+            try {
+              this.showNotification(
+                'Translating...',
+                `Looking up Hebrew translation for "${selectedText}"`
+              );
 
-            this.notifyContentScripts('VOCABULARY_UPDATED');
-            
-            this.showNotification(
-              'Word Added',
-              `"${selectedText}" added to vocabulary. Please add Hebrew translation in the extension popup.`
-            );
+              const translation = await this.translationService.translateToHebrew(selectedText);
+              
+              await db.addWord({
+                english: selectedText.toLowerCase(),
+                hebrew: translation.hebrew,
+                difficulty: 'medium',
+                category: 'context-menu'
+              });
+
+              this.notifyContentScripts('VOCABULARY_UPDATED');
+              
+              this.showNotification(
+                'Word Added',
+                `"${selectedText}" → "${translation.hebrew}" (via ${translation.source})`
+              );
+
+            } catch (error) {
+              // Fallback to placeholder if translation fails
+              console.error('Context menu translation failed:', error);
+              
+              await db.addWord({
+                english: selectedText.toLowerCase(),
+                hebrew: '[Add Hebrew translation]',
+                difficulty: 'medium',
+                category: 'context-menu'
+              });
+
+              this.notifyContentScripts('VOCABULARY_UPDATED');
+              
+              this.showNotification(
+                'Word Added (Translation Failed)',
+                `"${selectedText}" added to vocabulary. Please add Hebrew translation in the extension popup.`
+              );
+            }
           }
         }
       } else if (info.menuItemId === 'toggle-extension') {
