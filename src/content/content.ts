@@ -3,8 +3,7 @@ import {
   normalizeWord, 
   shouldReplaceWord, 
   extractContext,
-  isDomainExcluded,
-  debounce
+  isDomainExcluded
 } from '../shared/utils';
 import { TranslationService, TranslationResult } from '../shared/translation-service';
 
@@ -17,6 +16,14 @@ class ContentScript {
   private observer: MutationObserver | null = null;
   private translationService: TranslationService = new TranslationService();
   private loadingTooltip: HTMLElement | null = null;
+  private ctrlTooltip: HTMLElement | null = null;
+  private isCtrlPressed = false;
+  
+  // Performance optimizations
+  private vocabularyMap: Map<string, VocabularyWord> = new Map();
+  private processedNodes: WeakSet<Node> = new WeakSet();
+  private processingQueue: Set<Node> = new Set();
+  private processTimeout: number | null = null;
 
   async initialize(): Promise<void> {
     if (isDomainExcluded(window.location.href, this.settings?.excludedDomains || [])) {
@@ -24,6 +31,7 @@ class ContentScript {
     }
 
     await this.loadData();
+    this.buildVocabularyMap();
     this.setupEventListeners();
     this.setupMutationObserver();
     this.processPage();
@@ -38,54 +46,143 @@ class ContentScript {
 
       this.vocabulary = vocabularyResponse?.vocabulary || [];
       this.settings = settingsResponse?.settings || null;
+      this.buildVocabularyMap();
     } catch (error) {
       console.error('Failed to load data:', error);
     }
+  }
+
+  private buildVocabularyMap(): void {
+    this.vocabularyMap.clear();
+    this.vocabulary.forEach(word => {
+      this.vocabularyMap.set(normalizeWord(word.english), word);
+    });
   }
 
   private setupEventListeners(): void {
     document.addEventListener('mouseover', this.handleMouseOver.bind(this));
     document.addEventListener('mouseout', this.handleMouseOut.bind(this));
     document.addEventListener('click', this.handleClick.bind(this));
+    document.addEventListener('keydown', this.handleKeyDown.bind(this));
+    document.addEventListener('keyup', this.handleKeyUp.bind(this));
     
     // Listen for messages from background script
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'VOCABULARY_UPDATED') {
-        this.loadData().then(() => this.processPage());
+        this.loadData().then(() => {
+          this.resetReplacements();
+          this.processPage();
+        });
       } else if (message.type === 'SETTINGS_UPDATED') {
-        this.loadData().then(() => this.processPage());
+        this.loadData().then(() => {
+          this.resetReplacements();
+          this.processPage();
+        });
       }
       sendResponse({ success: true });
     });
   }
 
   private setupMutationObserver(): void {
-    this.observer = new MutationObserver(debounce(() => {
-      if (!this.isProcessing) {
-        this.processPage();
+    this.observer = new MutationObserver((mutations: MutationRecord[]) => {
+      // Clear any existing debounce timeout
+      if (this.processTimeout) {
+        clearTimeout(this.processTimeout);
       }
-    }, 1000));
+      
+      // Debounce manually to handle types correctly
+      this.processTimeout = window.setTimeout(() => {
+        if (this.isProcessing || !this.settings?.isEnabled) return;
+        
+        // Filter mutations to only process relevant changes
+        const relevantMutations = mutations.filter((mutation: MutationRecord) => {
+          // Skip our own changes
+          if (mutation.target instanceof Element && 
+              (mutation.target.classList.contains('hebrew-replacement') ||
+               mutation.target.closest('.hebrew-replacement, .hebrew-tooltip, .hebrew-loading-tooltip, .hebrew-temp-message'))) {
+            return false;
+          }
+          return true;
+        });
+        
+        if (relevantMutations.length > 0) {
+          this.processMutations(relevantMutations);
+        }
+      }, 500);
+    });
 
     this.observer.observe(document.body, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: false // Only watch for new/removed nodes, not text changes
     });
   }
 
   private async processPage(): Promise<void> {
-    if (!this.settings?.isEnabled || this.vocabulary.length === 0) {
+    if (!this.settings?.isEnabled || this.vocabularyMap.size === 0) {
       return;
     }
 
     this.isProcessing = true;
+    this.processedNodes = new WeakSet(); // Reset processed nodes
     
-    // Reset previous replacements
-    this.resetReplacements();
+    try {
+      await this.processContainer(document.body);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
 
-    // Process text nodes
+  private async processMutations(mutations: MutationRecord[]): Promise<void> {
+    const nodesToProcess: Node[] = [];
+    
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+        if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.ELEMENT_NODE) {
+          nodesToProcess.push(node);
+        }
+      });
+    });
+    
+    if (nodesToProcess.length > 0) {
+      this.queueNodesForProcessing(nodesToProcess);
+    }
+  }
+
+  private queueNodesForProcessing(nodes: Node[]): void {
+    nodes.forEach(node => this.processingQueue.add(node));
+    
+    if (this.processTimeout) {
+      clearTimeout(this.processTimeout);
+    }
+    
+    this.processTimeout = window.setTimeout(async () => {
+      if (this.isProcessing) return;
+      
+      this.isProcessing = true;
+      const batch = Array.from(this.processingQueue);
+      this.processingQueue.clear();
+      
+      try {
+        for (const node of batch) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            await this.processTextNode(node as Text);
+          } else if (node.nodeType === Node.ELEMENT_NODE) {
+            await this.processContainer(node as Element);
+          }
+        }
+      } finally {
+        this.isProcessing = false;
+      }
+    }, 100);
+  }
+
+  private async processContainer(container: Element): Promise<void> {
+    if (this.processedNodes.has(container)) return;
+    this.processedNodes.add(container);
+    
     const walker = document.createTreeWalker(
-      document.body,
+      container,
       NodeFilter.SHOW_TEXT,
       {
         acceptNode: (node) => {
@@ -93,13 +190,19 @@ class ContentScript {
           if (!parent) return NodeFilter.FILTER_REJECT;
 
           // Skip certain elements
-          const skipTags = ['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE'];
+          const skipTags = ['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE', 'NOSCRIPT'];
           if (skipTags.includes(parent.tagName)) {
             return NodeFilter.FILTER_REJECT;
           }
 
           // Skip already processed elements
-          if (parent.classList.contains('hebrew-replacement')) {
+          if (parent.classList.contains('hebrew-replacement') || 
+              parent.closest('.hebrew-replacement, .hebrew-tooltip, .hebrew-loading-tooltip, .hebrew-temp-message')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+
+          // Skip if already processed
+          if (this.processedNodes.has(node)) {
             return NodeFilter.FILTER_REJECT;
           }
 
@@ -114,17 +217,38 @@ class ContentScript {
       textNodes.push(node as Text);
     }
 
-    for (const textNode of textNodes) {
-      await this.processTextNode(textNode);
+    // Process nodes in batches to avoid blocking
+    const batchSize = 50;
+    for (let i = 0; i < textNodes.length; i += batchSize) {
+      const batch = textNodes.slice(i, i + batchSize);
+      
+      await new Promise(resolve => {
+        requestAnimationFrame(async () => {
+          for (const textNode of batch) {
+            if (!this.processedNodes.has(textNode)) {
+              this.processedNodes.add(textNode);
+              await this.processTextNode(textNode);
+            }
+          }
+          resolve(void 0);
+        });
+      });
+      
+      // Yield control to browser
+      if (i + batchSize < textNodes.length) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
-
-    this.isProcessing = false;
   }
 
   private async processTextNode(textNode: Text): Promise<void> {
-    if (!textNode.textContent) return;
+    if (!textNode.textContent || textNode.textContent.trim().length === 0) return;
 
     const text = textNode.textContent;
+    
+    // Quick check: does this text contain any vocabulary words?
+    if (!this.textContainsVocabulary(text)) return;
+    
     const words = text.split(/(\s+)/); // Split but keep whitespace
     let hasReplacements = false;
     const newContent: Array<string | HTMLElement> = [];
@@ -139,17 +263,15 @@ class ContentScript {
       }
 
       const normalizedWord = normalizeWord(word);
-      const vocabularyWord = this.vocabulary.find(
-        vw => normalizeWord(vw.english) === normalizedWord
-      );
+      const vocabularyWord = this.vocabularyMap.get(normalizedWord);
 
       if (vocabularyWord && shouldReplaceWord(vocabularyWord, this.settings!)) {
         const replacement = this.createReplacement(word, vocabularyWord, text);
         newContent.push(replacement);
         hasReplacements = true;
 
-        // Record the occurrence
-        this.recordOccurrence(vocabularyWord, text);
+        // Record the occurrence asynchronously
+        this.recordOccurrenceAsync(vocabularyWord, text);
       } else {
         newContent.push(word);
       }
@@ -158,6 +280,25 @@ class ContentScript {
     if (hasReplacements) {
       this.replaceTextNode(textNode, newContent);
     }
+  }
+
+  private textContainsVocabulary(text: string): boolean {
+    const normalizedText = text.toLowerCase();
+    
+    // Quick substring check for common words
+    for (const [normalizedWord] of this.vocabularyMap) {
+      if (normalizedText.includes(normalizedWord)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private recordOccurrenceAsync(word: VocabularyWord, context: string): void {
+    // Use setTimeout to make this truly asynchronous and non-blocking
+    setTimeout(() => {
+      this.recordOccurrence(word, context);
+    }, 0);
   }
 
   private createReplacement(
@@ -202,7 +343,12 @@ class ContentScript {
     if (target.classList.contains('hebrew-replacement')) {
       const replacementData = this.replacedWords.get(target);
       if (replacementData) {
-        this.showTooltip(target, replacementData.original);
+        if (this.isCtrlPressed) {
+          // Show Ctrl tooltip instead of regular tooltip
+          this.showCtrlTooltip(target, replacementData.original);
+        } else {
+          this.showTooltip(target, replacementData.original);
+        }
         
         // Highlight effect
         target.style.backgroundColor = '#dbeafe';
@@ -216,10 +362,43 @@ class ContentScript {
     
     if (target.classList.contains('hebrew-replacement')) {
       this.hideTooltip();
+      this.hideCtrlTooltip();
       
       // Remove highlight
       target.style.backgroundColor = 'transparent';
       target.style.color = '#2563eb';
+    }
+  }
+
+  private handleKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Control' && !this.isCtrlPressed) {
+      this.isCtrlPressed = true;
+      
+      // Update any currently hovered Hebrew words to show Ctrl tooltip
+      const hoveredElement = document.querySelector('.hebrew-replacement:hover') as HTMLElement;
+      if (hoveredElement) {
+        const replacementData = this.replacedWords.get(hoveredElement);
+        if (replacementData) {
+          this.hideTooltip();
+          this.showCtrlTooltip(hoveredElement, replacementData.original);
+        }
+      }
+    }
+  }
+
+  private handleKeyUp(event: KeyboardEvent): void {
+    if (event.key === 'Control' && this.isCtrlPressed) {
+      this.isCtrlPressed = false;
+      this.hideCtrlTooltip();
+      
+      // Show regular tooltip if still hovering
+      const hoveredElement = document.querySelector('.hebrew-replacement:hover') as HTMLElement;
+      if (hoveredElement) {
+        const replacementData = this.replacedWords.get(hoveredElement);
+        if (replacementData) {
+          this.showTooltip(hoveredElement, replacementData.original);
+        }
+      }
     }
   }
 
@@ -307,6 +486,82 @@ class ContentScript {
     if (this.tooltip) {
       this.tooltip.remove();
       this.tooltip = null;
+    }
+  }
+
+  private showCtrlTooltip(target: HTMLElement, originalWord: string): void {
+    this.hideCtrlTooltip(); // Hide any existing Ctrl tooltip
+
+    this.ctrlTooltip = document.createElement('div');
+    this.ctrlTooltip.className = 'hebrew-ctrl-tooltip';
+    this.ctrlTooltip.textContent = originalWord;
+    this.ctrlTooltip.style.cssText = `
+      position: absolute;
+      background: #7c3aed;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      z-index: 10001;
+      box-shadow: 0 2px 8px -1px rgba(124, 58, 237, 0.4), 0 1px 3px -1px rgba(0, 0, 0, 0.1);
+      pointer-events: none;
+      white-space: nowrap;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      transform: scale(0.95);
+      animation: ctrlTooltipAppear 0.15s ease-out forwards;
+    `;
+
+    // Add CSS animation if not already added
+    if (!document.getElementById('hebrew-ctrl-tooltip-styles')) {
+      const style = document.createElement('style');
+      style.id = 'hebrew-ctrl-tooltip-styles';
+      style.textContent = `
+        @keyframes ctrlTooltipAppear {
+          from {
+            opacity: 0;
+            transform: scale(0.9) translateY(4px);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+        .hebrew-ctrl-tooltip::before {
+          content: 'Ctrl + ';
+          opacity: 0.8;
+          font-size: 10px;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(this.ctrlTooltip);
+
+    const rect = target.getBoundingClientRect();
+    const tooltipRect = this.ctrlTooltip.getBoundingClientRect();
+    
+    let left = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+    let top = rect.top - tooltipRect.height - 12; // More space than regular tooltip
+
+    // Adjust if tooltip goes off screen
+    if (left < 0) left = 8;
+    if (left + tooltipRect.width > window.innerWidth) {
+      left = window.innerWidth - tooltipRect.width - 8;
+    }
+    if (top < 0) {
+      top = rect.bottom + 12;
+    }
+
+    this.ctrlTooltip.style.left = `${left + window.scrollX}px`;
+    this.ctrlTooltip.style.top = `${top + window.scrollY}px`;
+  }
+
+  private hideCtrlTooltip(): void {
+    if (this.ctrlTooltip) {
+      this.ctrlTooltip.remove();
+      this.ctrlTooltip = null;
     }
   }
 
@@ -545,21 +800,34 @@ class ContentScript {
     });
 
     this.replacedWords.clear();
+    this.processedNodes = new WeakSet(); // Reset processed nodes
     this.hideTooltip();
+    this.hideCtrlTooltip();
   }
 
   destroy(): void {
     this.resetReplacements();
     this.observer?.disconnect();
     this.hideTooltip();
+    this.hideCtrlTooltip();
     this.hideLoadingTooltip();
+    
+    // Clean up timeouts
+    if (this.processTimeout) {
+      clearTimeout(this.processTimeout);
+    }
     
     // Clean up any temporary messages
     document.querySelectorAll('.hebrew-temp-message').forEach(el => el.remove());
     
+    // Reset Ctrl key state
+    this.isCtrlPressed = false;
+    
     document.removeEventListener('mouseover', this.handleMouseOver);
     document.removeEventListener('mouseout', this.handleMouseOut);
     document.removeEventListener('click', this.handleClick);
+    document.removeEventListener('keydown', this.handleKeyDown);
+    document.removeEventListener('keyup', this.handleKeyUp);
   }
 }
 
